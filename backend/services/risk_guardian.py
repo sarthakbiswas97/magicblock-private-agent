@@ -1,11 +1,14 @@
 """Risk Guardian -- validates trades against risk limits. In-memory state."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from dataclasses import dataclass
 
 from models.risk import RiskState, RiskCheckResult
 from config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -190,7 +193,7 @@ class RiskGuardian:
         self._circuit_breaker_active = True
         self._state.trading_enabled = False
         self._state.circuit_breaker_reason = reason
-        print(f"CIRCUIT BREAKER TRIGGERED: {reason}")
+        logger.warning("CIRCUIT BREAKER TRIGGERED: %s", reason)
 
     def reset_circuit_breaker(self):
         self._circuit_breaker_active = False

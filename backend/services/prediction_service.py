@@ -1,5 +1,6 @@
 """Prediction service -- ML model inference with SHAP explanations."""
 
+import logging
 import numpy as np
 import joblib
 import shap
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .feature_engine import FeatureVector
+
+logger = logging.getLogger(__name__)
 
 MODEL_PATH = Path(__file__).parent.parent.parent / "ml" / "models" / "model_bundle_latest.joblib"
 
@@ -40,7 +43,7 @@ class PredictionService:
 
     def load_model(self, model_path: Path = MODEL_PATH) -> bool:
         if not model_path.exists():
-            print(f"Model not found at {model_path}")
+            logger.error("Model not found at %s", model_path)
             return False
 
         try:
@@ -50,11 +53,12 @@ class PredictionService:
             self.feature_order = self.metadata["features"]
             self.explainer = shap.TreeExplainer(self.model)
 
-            print(f"Model loaded: v{self.metadata['version']}")
-            print(f"  Accuracy: {self.metadata['results']['accuracy']:.2%}")
+            logger.info("Model loaded: v%s (accuracy: %.2f%%)",
+                        self.metadata["version"],
+                        self.metadata["results"]["accuracy"] * 100)
             return True
         except Exception as e:
-            print(f"Failed to load model: {e}")
+            logger.error("Failed to load model: %s", e)
             return False
 
     def predict(self, features: FeatureVector) -> Optional[Prediction]:
