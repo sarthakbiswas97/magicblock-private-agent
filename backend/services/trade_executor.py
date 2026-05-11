@@ -1,5 +1,6 @@
 """Private trade executor -- orchestrates the full MEV-protected trading pipeline."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -52,10 +53,35 @@ class TradeRecord:
 
 
 class PrivateTradeExecutor:
+    AUTO_TRADE_INTERVAL = 90  # seconds between auto-trades
+
     def __init__(self):
         self.trade_history: list[TradeRecord] = []
         self.latest_pipeline: Optional[PipelineResult] = None
-        self._running = False
+        self._auto_running = False
+        self._auto_task: Optional[asyncio.Task] = None
+
+    async def start_auto_trading(self) -> None:
+        if self._auto_running:
+            return
+        self._auto_running = True
+        self._auto_task = asyncio.create_task(self._auto_trade_loop())
+        logger.info("Auto-trading started (interval: %ds)", self.AUTO_TRADE_INTERVAL)
+
+    async def stop_auto_trading(self) -> None:
+        self._auto_running = False
+        if self._auto_task:
+            self._auto_task.cancel()
+            self._auto_task = None
+        logger.info("Auto-trading stopped")
+
+    async def _auto_trade_loop(self) -> None:
+        while self._auto_running:
+            try:
+                await self.execute_pipeline()
+            except Exception as e:
+                logger.error("Auto-trade cycle failed: %s", e)
+            await asyncio.sleep(self.AUTO_TRADE_INTERVAL)
 
     async def execute_pipeline(self) -> PipelineResult:
         """Run one full private trading cycle."""
@@ -183,6 +209,7 @@ class PrivateTradeExecutor:
             return self._finalize(steps, pipeline_start, trade_id, executed=False)
 
         # Step 5: Private Execution via MagicBlock PER
+        # Full lifecycle: deposit -> private swap -> withdraw
         step = PipelineStep(name="private_execution", status="running")
         t0 = time.time()
         try:
@@ -195,11 +222,17 @@ class PrivateTradeExecutor:
             else:
                 amount_raw = int((amount_usd / price) * 1_000_000_000)
 
+            # 5a: Deposit tokens into ephemeral rollup
+            deposit_result = await magicblock_client.deposit(input_mint, amount_raw)
+
+            # 5b: Execute private swap inside PER
             quote = await magicblock_client.get_swap_quote(input_mint, output_mint, amount_raw)
+            swap_result = await magicblock_client.execute_private_swap(quote)
 
-            tx_result = await magicblock_client.execute_private_swap(quote)
+            # 5c: Withdraw output tokens back to mainnet
+            withdraw_result = await magicblock_client.withdraw(output_mint, quote.out_amount)
 
-            if tx_result.success:
+            if swap_result.success:
                 step.complete(
                     {
                         "action": action,
@@ -207,7 +240,11 @@ class PrivateTradeExecutor:
                         "output_mint": output_mint[:8] + "...",
                         "in_amount": quote.in_amount,
                         "out_amount": quote.out_amount,
-                        "tx_signature": tx_result.signature,
+                        "lifecycle": {
+                            "deposit": deposit_result.signature,
+                            "swap": swap_result.signature,
+                            "withdraw": withdraw_result.signature,
+                        },
                         "visibility": "private",
                         "execution_layer": "MagicBlock PER (TEE)",
                     },
@@ -215,7 +252,7 @@ class PrivateTradeExecutor:
                 )
                 risk_guardian.record_trade()
             else:
-                step.fail(f"Swap failed: {tx_result.error}")
+                step.fail(f"Swap failed: {swap_result.error}")
 
             step.duration_ms = (time.time() - t0) * 1000
 
@@ -227,13 +264,15 @@ class PrivateTradeExecutor:
 
         executed = step.status == "completed"
 
-        # Step 6: Settlement status
+        # Step 6: Settlement with MEV comparison
         step = PipelineStep(name="settlement", status="running")
         if executed:
+            mev_estimate = self._estimate_mev_loss(price, position_size)
             step.complete(
                 {
                     "settled_to": "Solana Mainnet",
                     "mev_protected": True,
+                    "mev_savings": mev_estimate,
                     "note": "Only final settlement visible on-chain",
                 },
                 is_private=False,
@@ -246,7 +285,7 @@ class PrivateTradeExecutor:
         self._record_trade(
             trade_id, prediction, position_size, price,
             risk_result.risk_score, executed=executed,
-            tx_signature=steps[-2].data.get("tx_signature", "") if executed else "",
+            tx_signature=steps[-2].data.get("tx_signature", "") if executed and len(steps) >= 2 else "",
         )
 
         return self._finalize(steps, pipeline_start, trade_id, executed=executed)
@@ -295,13 +334,40 @@ class PrivateTradeExecutor:
         if len(self.trade_history) > 100:
             self.trade_history = self.trade_history[-100:]
 
+    @staticmethod
+    def _estimate_mev_loss(price: float, position_size_pct: float) -> dict:
+        """Estimate MEV loss if this trade were executed on public mainnet."""
+        trade_value_usd = settings.initial_capital * position_size_pct
+        sandwich_slippage_bps = 30
+        frontrun_slippage_bps = 15
+        estimated_loss_usd = trade_value_usd * (sandwich_slippage_bps + frontrun_slippage_bps) / 10_000
+
+        return {
+            "without_per": {
+                "sandwich_attack_bps": sandwich_slippage_bps,
+                "frontrun_slippage_bps": frontrun_slippage_bps,
+                "estimated_loss_usd": round(estimated_loss_usd, 4),
+            },
+            "with_per": {
+                "mev_exposure_bps": 0,
+                "estimated_loss_usd": 0.0,
+            },
+            "savings_usd": round(estimated_loss_usd, 4),
+        }
+
     def get_status(self) -> dict:
         total = len(self.trade_history)
         executed = sum(1 for t in self.trade_history if t.executed)
+        total_savings = sum(
+            t.to_dict().get("mev_savings", 0)
+            for t in self.trade_history if t.executed
+        )
         return {
             "total_trades": total,
             "executed_trades": executed,
             "rejected_trades": total - executed,
+            "auto_trading": self._auto_running,
+            "auto_interval_seconds": self.AUTO_TRADE_INTERVAL,
             "latest_pipeline": self.latest_pipeline.to_dict() if self.latest_pipeline else None,
         }
 
