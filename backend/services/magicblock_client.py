@@ -147,7 +147,7 @@ class MagicBlockClient:
         if self._mock_mode:
             return
         elapsed = time.time() - self._token_acquired_at
-        if elapsed > 3000:
+        if elapsed > 900:
             await self._authenticate()
 
     async def get_balance(self) -> dict:
@@ -264,6 +264,12 @@ class MagicBlockClient:
         try:
             tx_b64 = tx_response.get("transactionBase64", "")
             send_to = tx_response.get("sendTo", "base")
+
+            if not tx_b64:
+                return TransactionResult(success=False, error="API returned empty transaction")
+
+            if not self._keypair:
+                return TransactionResult(success=False, error="No keypair for signing")
 
             tx_bytes = base64.b64decode(tx_b64)
             tx = VersionedTransaction.from_bytes(tx_bytes)
