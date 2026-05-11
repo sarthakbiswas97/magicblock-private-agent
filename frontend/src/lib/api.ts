@@ -86,3 +86,21 @@ export async function executeTrade(): Promise<PipelineResult | null> {
     return null;
   }
 }
+
+export async function startAutoTrading(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/trade/auto/start`, { method: "POST" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function stopAutoTrading(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/trade/auto/stop`, { method: "POST" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

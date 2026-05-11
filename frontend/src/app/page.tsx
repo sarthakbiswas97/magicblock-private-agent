@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useAppData, executeTrade } from "@/lib/api";
+import { useAppData, executeTrade, startAutoTrading, stopAutoTrading } from "@/lib/api";
 import PrivacyPipeline from "@/components/PrivacyPipeline";
 import TradeCard from "@/components/TradeCard";
 import PriceChart from "@/components/PriceChart";
@@ -9,15 +9,26 @@ import RiskPanel from "@/components/RiskPanel";
 import ActivityFeed from "@/components/ActivityFeed";
 import MagicBlockStatus from "@/components/MagicBlockStatus";
 import type { PipelineResult } from "@/lib/types";
-import { Shield, Brain, Lock } from "lucide-react";
+import { Shield, Brain, Lock, Radio } from "lucide-react";
 
 export default function Home() {
   const data = useAppData();
   const [livePipeline, setLivePipeline] = useState<PipelineResult | null>(null);
+  const [autoTrading, setAutoTrading] = useState(false);
 
   const handleExecute = useCallback(async () => {
     const result = await executeTrade();
     if (result) setLivePipeline(result);
+  }, []);
+
+  const handleAutoStart = useCallback(async () => {
+    const ok = await startAutoTrading();
+    if (ok) setAutoTrading(true);
+  }, []);
+
+  const handleAutoStop = useCallback(async () => {
+    const ok = await stopAutoTrading();
+    if (ok) setAutoTrading(false);
   }, []);
 
   const pipeline = livePipeline ?? data.pipeline;
@@ -35,6 +46,12 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
+            {autoTrading && (
+              <span className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-950/30 border border-amber-500/20 px-2 py-0.5 rounded-full pulse-glow">
+                <Radio size={9} />
+                Auto Trading
+              </span>
+            )}
             {data.agent?.magicblock_connected && (
               <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/30 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                 <Lock size={9} />
@@ -71,7 +88,10 @@ export default function Home() {
         <TradeCard
           pipeline={pipeline}
           prediction={data.prediction}
+          autoTrading={autoTrading}
           onExecute={handleExecute}
+          onAutoStart={handleAutoStart}
+          onAutoStop={handleAutoStop}
         />
         <PriceChart
           candles={data.candles}

@@ -43,6 +43,14 @@ export interface RiskStatus {
   trading_enabled: boolean;
 }
 
+export interface TradesStatus {
+  total_trades: number;
+  executed_trades: number;
+  rejected_trades: number;
+  auto_trading: boolean;
+  auto_interval_seconds: number;
+}
+
 export interface MagicBlockStatus {
   authenticated: boolean;
   mock_mode: boolean;
