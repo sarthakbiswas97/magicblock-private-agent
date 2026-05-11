@@ -87,7 +87,12 @@ export default function PriceChart({ candles, latestPrice }: PriceChartProps) {
         <h2 className="text-sm font-semibold text-gray-200">SOL/USDC</h2>
         <span className="text-sm font-mono text-gray-300">${latestPrice.toFixed(2)}</span>
       </div>
-      <div ref={containerRef} />
+      <div ref={containerRef} className="min-h-[260px]" />
+      {candles.length === 0 && (
+        <div className="flex items-center justify-center h-[260px] -mt-[260px] text-xs text-gray-500">
+          Waiting for market data...
+        </div>
+      )}
     </div>
   );
 }
