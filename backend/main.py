@@ -1,6 +1,7 @@
 """Phantom Alpha -- Private AI Trading Agent powered by MagicBlock."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -44,7 +45,11 @@ app = FastAPI(title="Phantom Alpha", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -153,6 +158,18 @@ async def magicblock_status():
 async def execute_trade():
     result = await trade_executor.execute_pipeline()
     return result.to_dict()
+
+
+@app.post("/trade/auto/start")
+async def start_auto_trading():
+    await trade_executor.start_auto_trading()
+    return {"status": "started", "interval_seconds": trade_executor.AUTO_TRADE_INTERVAL}
+
+
+@app.post("/trade/auto/stop")
+async def stop_auto_trading():
+    await trade_executor.stop_auto_trading()
+    return {"status": "stopped"}
 
 
 @app.get("/pipeline/latest")
