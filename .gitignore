@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+node_modules/
+.next/
+target/
+*.joblib
+!ml/models/model_bundle_latest.joblib
+.DS_Store
+*.log
