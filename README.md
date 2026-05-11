@@ -31,6 +31,8 @@ What MEV bots see:              What actually happens:
 
 Steps 1-5 are invisible. MEV bots only see the settled result -- by then it's too late to front-run.
 
+**MEV Savings** -- Each executed trade estimates the cost of running the same trade on public mainnet (sandwich attack + frontrun slippage) vs. the PER-protected execution. The dashboard shows real-time savings per trade.
+
 ---
 
 ## MagicBlock Integration
@@ -41,18 +43,17 @@ This project uses the **Private Payments API** (`payments.magicblock.app`) -- Ma
 
 **Authentication** -- The agent authenticates via challenge-response. It requests a challenge string from `/v1/spl/challenge`, signs it with its Solana keypair, and submits the signature to `/v1/spl/login` to receive a bearer token. All subsequent API calls are auth-gated.
 
-**Private Swap Execution** -- When the AI decides to trade, the agent:
-1. Calls `/v1/swap/quote` to get swap pricing between SOL and USDC
-2. Calls `/v1/swap` with `visibility: "private"` and `fromBalance: "ephemeral"` to execute the swap inside the PER
-3. Signs the returned unsigned transaction with its Solana keypair
-4. Submits to the ephemeral rollup -- not to mainnet
+**Full Trade Lifecycle** -- Each trade runs the complete deposit -> swap -> withdraw cycle:
 
-The swap executes inside TEE-secured infrastructure. The machine operator, validators, and observers cannot inspect the trade state. Only the final settlement is written to Solana L1.
+1. `/v1/spl/deposit` -- move tokens from Solana into the ephemeral rollup
+2. `/v1/swap/quote` -- get swap pricing between SOL and USDC
+3. `/v1/swap` with `visibility: "private"` and `fromBalance: "ephemeral"` -- execute inside PER
+4. Agent signs the returned unsigned transaction with its Solana keypair
+5. `/v1/spl/withdraw` -- settle output tokens back to Solana mainnet
 
-**Balance Management** -- The agent can:
-- `/v1/spl/deposit` -- move tokens from Solana into the ephemeral rollup
-- `/v1/spl/private-balance` -- query its shielded balance (auth-gated)
-- `/v1/spl/withdraw` -- settle tokens back to Solana mainnet
+All 3 transaction signatures (deposit, swap, withdraw) are tracked in the pipeline result. The swap executes inside TEE-secured infrastructure -- the machine operator, validators, and observers cannot inspect trade state.
+
+**Balance Queries** -- `/v1/spl/private-balance` returns the agent's shielded balance inside the ephemeral rollup (auth-gated).
 
 ### Why PER over standard ER
 
@@ -85,14 +86,14 @@ Standard Ephemeral Rollups give performance (sub-10ms, gasless). Private Ephemer
 | `services/prediction_service.py` | XGBoost inference with SHAP explanations for each prediction |
 | `services/risk_guardian.py` | Multi-factor risk gate -- position sizing, drawdown throttle, circuit breaker, cooldown |
 | `services/magicblock_client.py` | Private Payments API client -- auth, deposit, private swap, withdraw |
-| `services/trade_executor.py` | Orchestrates the full 6-step pipeline, tracks privacy status per step |
+| `services/trade_executor.py` | Orchestrates 6-step pipeline, MEV savings calc, auto-trading loop |
 
 ### Frontend (Next.js / React / Tailwind)
 
 | Component | Purpose |
 |-----------|---------|
 | `PrivacyPipeline` | Visual 6-node pipeline showing which steps are private vs public |
-| `TradeCard` | One-click trade execution with SHAP signal breakdown |
+| `TradeCard` | Trade execution, SHAP signals, auto-trade toggle, MEV savings |
 | `PriceChart` | Real-time SOL/USDC candlestick chart |
 | `RiskPanel` | Live drawdown, throttle factor, circuit breaker status |
 | `MagicBlockStatus` | PER connection status and ephemeral balance |
@@ -104,15 +105,16 @@ Standard Ephemeral Rollups give performance (sub-10ms, gasless). Private Ephemer
 
 1. Backend starts -- loads XGBoost model, fetches SOL/USDC candles, authenticates with MagicBlock
 2. Frontend connects -- shows real-time price, agent status, MagicBlock PER connection
-3. User clicks **"Execute Private Trade"**:
+3. User clicks **"Execute Private Trade"** (or enables **Auto Trade** for autonomous 90s loop):
    - Market data fetched (public, ~1ms)
    - 14 features computed (private, off-chain, ~7ms)
    - XGBoost predicts direction + top 3 SHAP drivers (private, off-chain, ~10ms)
    - Risk gate validates -- position size, drawdown, cooldown (private, off-chain, ~1ms)
-   - MagicBlock PER executes private swap (private, TEE, ~5ms)
-   - Settlement status recorded (on-chain)
+   - MagicBlock PER runs full lifecycle: deposit -> private swap -> withdraw (private, TEE, ~5ms)
+   - Settlement + MEV savings displayed (on-chain)
 4. Pipeline visualization animates through each step with privacy labels
-5. Activity feed shows trade with lock icon indicating private execution
+5. MEV savings banner shows estimated frontrun loss avoided
+6. Activity feed shows trade with lock icon indicating private execution
 
 Total pipeline: ~24ms end-to-end.
 
@@ -122,8 +124,8 @@ Total pipeline: ~24ms end-to-end.
 
 ### Technology (40%)
 
-- **MagicBlock Integration**: Full Private Payments API integration -- challenge-response auth, swap quotes, private swap execution with `visibility: "private"`, ephemeral balance queries
-- **Working Demo**: End-to-end pipeline runs in ~24ms. Backend serves real predictions, frontend visualizes each step
+- **MagicBlock Integration**: Full Private Payments API lifecycle -- challenge-response auth, deposit into PER, private swap with `visibility: "private"`, withdraw to mainnet, ephemeral balance queries
+- **Working Demo**: End-to-end pipeline runs in ~24ms. Full deposit-swap-withdraw cycle. MEV savings calculated per trade. Auto-trading loop for autonomous operation
 - **Architecture**: Clean separation -- pure indicator functions, ML inference, risk validation, MagicBlock client, pipeline orchestrator. Each service is independently testable
 
 ### Impact (30%)
@@ -134,9 +136,9 @@ Total pipeline: ~24ms end-to-end.
 
 ### Creativity & UX (30%)
 
-- **Novel Primitive**: Combining ML prediction + risk management + private execution in a single pipeline where each step's privacy status is tracked and visualized
-- **UX**: One-click private trade with real-time pipeline animation showing exactly what's hidden from MEV bots
-- **System Clarity**: The privacy pipeline visualization makes the abstract concept of "private execution" concrete -- users see which steps are shielded and which are public
+- **Novel Primitive**: Combining ML prediction + risk management + private execution in a single pipeline where each step's privacy status is tracked and visualized. MEV savings quantified per trade
+- **UX**: One-click private trade or autonomous auto-trading mode. Real-time pipeline animation showing exactly what's hidden from MEV bots. MEV savings displayed on every executed trade
+- **System Clarity**: The privacy pipeline visualization makes the abstract concept of "private execution" concrete -- users see which steps are shielded, the full deposit-swap-withdraw lifecycle, and exactly how much MEV loss was avoided
 
 ---
 
